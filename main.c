@@ -40,6 +40,20 @@ static char **lsh_split_line(char *line)
     return tokens;
 }
 
+static void lsh_wait_for(pid_t pid)
+{
+    int status;
+
+    while (waitpid(pid, &status, 0) == -1) {
+        if (errno == EINTR) {
+            continue;
+        }
+
+        perror("waitpid");
+        break;
+    }
+}
+
 static int lsh_launch(char **args)
 {
     pid_t pid = fork();
@@ -48,21 +62,74 @@ static int lsh_launch(char **args)
         execvp(args[0], args);
         perror(args[0]);
         _exit(EXIT_FAILURE);
-    } else if (pid < 0) {
-        perror("fork");
-    } else {
-        int status;
-
-        while (waitpid(pid, &status, 0) == -1) {
-            if (errno == EINTR) {
-                continue;
-            }
-
-            perror("waitpid");
-            break;
-        }
     }
 
+    if (pid < 0) {
+        perror("fork");
+    } else {
+        lsh_wait_for(pid);
+    }
+
+    return 1;
+}
+
+static int lsh_pipeline(char **left, char **right)
+{
+    int fds[2];
+
+    if (pipe(fds) == -1) {
+        perror("pipe");
+        return 1;
+    }
+
+    pid_t left_pid = fork();
+
+    if (left_pid == 0) {
+        if (dup2(fds[1], STDOUT_FILENO) == -1) {
+            perror("dup2");
+            _exit(EXIT_FAILURE);
+        }
+
+        close(fds[0]);
+        close(fds[1]);
+        execvp(left[0], left);
+        perror(left[0]);
+        _exit(EXIT_FAILURE);
+    }
+
+    if (left_pid < 0) {
+        perror("fork");
+        close(fds[0]);
+        close(fds[1]);
+        return 1;
+    }
+
+    pid_t right_pid = fork();
+
+    if (right_pid == 0) {
+        if (dup2(fds[0], STDIN_FILENO) == -1) {
+            perror("dup2");
+            _exit(EXIT_FAILURE);
+        }
+
+        close(fds[0]);
+        close(fds[1]);
+        execvp(right[0], right);
+        perror(right[0]);
+        _exit(EXIT_FAILURE);
+    }
+
+    close(fds[0]);
+    close(fds[1]);
+
+    if (right_pid < 0) {
+        perror("fork");
+        lsh_wait_for(left_pid);
+        return 1;
+    }
+
+    lsh_wait_for(left_pid);
+    lsh_wait_for(right_pid);
     return 1;
 }
 
@@ -95,6 +162,31 @@ static int lsh_execute(char **args)
 {
     if (args[0] == NULL) {
         return 1;
+    }
+
+    size_t pipe_index = 0;
+    int pipe_found = 0;
+
+    for (size_t i = 0; args[i] != NULL; i++) {
+        if (strcmp(args[i], "|") == 0) {
+            if (pipe_found) {
+                fprintf(stderr, "lsh: only one pipe is supported for now\n");
+                return 1;
+            }
+
+            pipe_index = i;
+            pipe_found = 1;
+        }
+    }
+
+    if (pipe_found) {
+        if (pipe_index == 0 || args[pipe_index + 1] == NULL) {
+            fprintf(stderr, "lsh: put a command on both sides of |\n");
+            return 1;
+        }
+
+        args[pipe_index] = NULL;
+        return lsh_pipeline(args, &args[pipe_index + 1]);
     }
 
     if (strcmp(args[0], "cd") == 0) {
