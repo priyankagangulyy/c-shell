@@ -1,9 +1,11 @@
-
 #define _POSIX_C_SOURCE 200809L
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 static char **lsh_split_line(char *line)
 {
@@ -38,6 +40,30 @@ static char **lsh_split_line(char *line)
     return tokens;
 }
 
+static void lsh_launch(char **args)
+{
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        execvp(args[0], args);
+        perror(args[0]);
+        _exit(EXIT_FAILURE);
+    } else if (pid < 0) {
+        perror("fork");
+    } else {
+        int status;
+
+        while (waitpid(pid, &status, 0) == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            perror("waitpid");
+            break;
+        }
+    }
+}
+
 int main(void)
 {
     char *line = NULL;
@@ -59,8 +85,8 @@ int main(void)
             break;
         }
 
-        for (size_t i = 0; args[i] != NULL; i++) {
-            printf("arg[%zu] = %s\n", i, args[i]);
+        if (args[0] != NULL) {
+            lsh_launch(args);
         }
 
         free(args);
