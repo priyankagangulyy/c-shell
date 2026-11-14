@@ -40,7 +40,7 @@ static char **lsh_split_line(char *line)
     return tokens;
 }
 
-static void lsh_launch(char **args)
+static int lsh_launch(char **args)
 {
     pid_t pid = fork();
 
@@ -62,14 +62,61 @@ static void lsh_launch(char **args)
             break;
         }
     }
+
+    return 1;
+}
+
+static int lsh_cd(char **args)
+{
+    if (args[1] == NULL) {
+        fprintf(stderr, "lsh: expected a directory after cd\n");
+    } else if (chdir(args[1]) != 0) {
+        perror("cd");
+    }
+
+    return 1;
+}
+
+static int lsh_help(char **args)
+{
+    (void)args;
+    puts("Built-in commands: cd, help, exit");
+    puts("Other commands are searched for using PATH.");
+    return 1;
+}
+
+static int lsh_exit(char **args)
+{
+    (void)args;
+    return 0;
+}
+
+static int lsh_execute(char **args)
+{
+    if (args[0] == NULL) {
+        return 1;
+    }
+
+    if (strcmp(args[0], "cd") == 0) {
+        return lsh_cd(args);
+    }
+    if (strcmp(args[0], "help") == 0) {
+        return lsh_help(args);
+    }
+    if (strcmp(args[0], "exit") == 0) {
+        return lsh_exit(args);
+    }
+
+    return lsh_launch(args);
 }
 
 int main(void)
 {
     char *line = NULL;
     size_t line_capacity = 0;
+    int status = 1;
 
-    while (1) {
+    while (status) {
         printf("lsh> ");
         fflush(stdout);
 
@@ -85,10 +132,7 @@ int main(void)
             break;
         }
 
-        if (args[0] != NULL) {
-            lsh_launch(args);
-        }
-
+        status = lsh_execute(args);
         free(args);
     }
 
