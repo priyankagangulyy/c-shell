@@ -55,36 +55,73 @@ static void lsh_wait_for(pid_t pid)
     }
 }
 
+static int lsh_set_redirections(char **args)
+{
+    for (size_t i = 0; args[i] != NULL;) {
+        int target_fd;
+        int flags;
+
+        if (strcmp(args[i], "<") == 0) {
+            target_fd = STDIN_FILENO;
+            flags = O_RDONLY;
+        } else if (strcmp(args[i], ">") == 0) {
+            target_fd = STDOUT_FILENO;
+            flags = O_WRONLY | O_CREAT | O_TRUNC;
+        } else {
+            i++;
+            continue;
+        }
+
+        if (args[i + 1] == NULL) {
+            fprintf(stderr, "lsh: expected a filename after %s\n", args[i]);
+            return -1;
+        }
+
+        char *filename = args[i + 1];
+        int fd;
+
+        if (target_fd == STDIN_FILENO) {
+            fd = open(filename, flags);
+        } else {
+            fd = open(filename, flags, 0644);
+        }
+
+        if (fd == -1) {
+            perror(filename);
+            return -1;
+        }
+
+        if (dup2(fd, target_fd) == -1) {
+            perror("dup2");
+            close(fd);
+            return -1;
+        }
+
+        close(fd);
+
+        size_t j = i;
+        while (args[j + 2] != NULL) {
+            args[j] = args[j + 2];
+            j++;
+        }
+        args[j] = NULL;
+    }
+
+    return 0;
+}
+
 static int lsh_launch(char **args)
 {
     pid_t pid = fork();
 
     if (pid == 0) {
-        for (size_t i = 0; args[i] != NULL; i++) {
-            if (strcmp(args[i], ">") == 0) {
-                if (args[i + 1] == NULL) {
-                    fprintf(stderr, "lsh: expected a filename after >\n");
-                    _exit(EXIT_FAILURE);
-                }
+        if (lsh_set_redirections(args) == -1) {
+            _exit(EXIT_FAILURE);
+        }
 
-                int fd = open(args[i + 1],
-                              O_WRONLY | O_CREAT | O_TRUNC,
-                              0644);
-                if (fd == -1) {
-                    perror(args[i + 1]);
-                    _exit(EXIT_FAILURE);
-                }
-
-                if (dup2(fd, STDOUT_FILENO) == -1) {
-                    perror("dup2");
-                    close(fd);
-                    _exit(EXIT_FAILURE);
-                }
-
-                close(fd);
-                args[i] = NULL;
-                break;
-            }
+        if (args[0] == NULL) {
+            fprintf(stderr, "lsh: missing command\n");
+            _exit(EXIT_FAILURE);
         }
 
         execvp(args[0], args);
