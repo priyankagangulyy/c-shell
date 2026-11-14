@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,6 +60,33 @@ static int lsh_launch(char **args)
     pid_t pid = fork();
 
     if (pid == 0) {
+        for (size_t i = 0; args[i] != NULL; i++) {
+            if (strcmp(args[i], ">") == 0) {
+                if (args[i + 1] == NULL) {
+                    fprintf(stderr, "lsh: expected a filename after >\n");
+                    _exit(EXIT_FAILURE);
+                }
+
+                int fd = open(args[i + 1],
+                              O_WRONLY | O_CREAT | O_TRUNC,
+                              0644);
+                if (fd == -1) {
+                    perror(args[i + 1]);
+                    _exit(EXIT_FAILURE);
+                }
+
+                if (dup2(fd, STDOUT_FILENO) == -1) {
+                    perror("dup2");
+                    close(fd);
+                    _exit(EXIT_FAILURE);
+                }
+
+                close(fd);
+                args[i] = NULL;
+                break;
+            }
+        }
+
         execvp(args[0], args);
         perror(args[0]);
         _exit(EXIT_FAILURE);
